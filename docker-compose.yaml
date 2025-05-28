@@ -1,0 +1,23 @@
+services:
+  ollama:
+    build:
+      context: ./ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    container_name: ollama
+
+  api:
+    build:
+      context: ./api
+    depends_on:
+      - ollama
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    container_name: translate-api
+
+volumes:
+  ollama_models:
