@@ -1,6 +1,11 @@
+import asyncio
+import json
+import time
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import httpx
+from starlette.responses import StreamingResponse
 
 app = FastAPI()
 
@@ -19,27 +24,90 @@ class DiscussionRequest(BaseModel):
 async def translate(req: TranslationRequest):
     prompt = (
         f"Traduis en '{req.target_lang}' la phrase en '{req.source_lang}' : \"{req.text}\".\n"
-        "Réponds uniquement avec la traduction, séparée d'un séparateur de ligne, "
-        "la langue réelle de la phrase à traduire en majuscules en anglais, "
-        "suivie d'un autre séparateur de ligne, suivie d'une explication, "
-        "suivie d'un autre séparateur de ligne, suivie de la version corrigée de la phrase s'il y a des fautes."
+        "Réponds uniquement avec la traduction, suivi du séparateur de ligne suivant : |||, "
+        f"suivie en '{req.source_lang}' de la langue réelle de la phrase à traduire en majuscules suivie du séparateur de ligne suivant : |||, "
+        f"suivie d'une explication en '{req.source_lang}', suivie du séparateur de ligne suivant : |||, "
+        f"suivie de la version corrigée de la phrase s'il y a des fautes en '{req.source_lang}'."
     )
 
-    payload = {
-        "model": MODEL_NAME,
-        "prompt": prompt,
-        "stream": False
+    async def event_stream():
+        payload = {
+            "model": MODEL_NAME,
+            "prompt": prompt,
+            "stream": True
+        }
+
+        numbreOfSeparationsCounter = 0
+        breaklineContainer = ""
+        result = {
+            "translation": "",
+            "language": None,
+            "explanation": None,
+            "correction": None
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream("POST", OLLAMA_URL, json=payload) as response:
+                async for line in response.aiter_lines():
+                    try:
+                        data = json.loads(line)
+                        content = data.get("response", "")
+
+                        tmpContent = content
+
+                        print(f"LINE: {content}")
+
+                        hasBreakline = False
+
+                        tmpContent = tmpContent.replace(" ", "").replace("\n", "")
+                        print(f"REPLACED CONTENT: {tmpContent}")
+                        if "|" in tmpContent:
+                            hasBreakline = True
+                            breaklineContainer += tmpContent
+
+                        if hasBreakline and breaklineContainer.strip() is not "|||":
+                            print(f"BREAKLINE CONTAINER: {breaklineContainer}")
+                            continue
+                        elif hasBreakline:
+                            content = content.replace("|", "")
+
+                        if "|||" in breaklineContainer:
+                            numbreOfSeparationsCounter += 1
+                            breaklineContainer = ""
+                            result = {
+                                "translation": "",
+                                "language": None,
+                                "explanation": None,
+                                "correction": None
+                            }
+
+                        # Traitement selon compteur
+                        if numbreOfSeparationsCounter == 0:
+                            result["translation"] = content
+                        elif numbreOfSeparationsCounter == 1:
+                            result["language"] = content
+                        elif numbreOfSeparationsCounter == 2:
+                            result["explanation"] = content
+                        elif numbreOfSeparationsCounter == 3:
+                            result["correction"] = content
+
+                        print(f"RESULT: {result}")
+
+                        yield f"{json.dumps(result)}\n\n"
+
+                        await asyncio.sleep(0.01)  # Ajout explicite pour laisser la boucle rescheduler
+
+
+                    except Exception as e:
+                        print("Erreur parsing:", e)
+                        continue
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",  # Pour nginx reverse proxy
     }
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(OLLAMA_URL, json=payload)
-
-    if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Ollama error")
-
-    result = response.json()
-    split_result = result["response"].split("\n\n")
-    return {"translation": split_result[0], "language": split_result[1], "explanation": split_result[2], "correction": "" if len(split_result) < 4 else split_result[3]}
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
 @app.post("/discuss")
 async def discuss(req: DiscussionRequest):
