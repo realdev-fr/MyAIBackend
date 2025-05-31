@@ -114,14 +114,30 @@ async def discuss(req: DiscussionRequest):
     payload = {
         "model": MODEL_NAME,
         "prompt": req.text,
-        "stream": False
+        "stream": True
     }
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(OLLAMA_URL, json=payload)
+    async def event_stream():
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            async with client.stream("POST", OLLAMA_URL, json=payload) as response:
+                async for line in response.aiter_lines():
+                    try:
+                        data = json.loads(line)
+                        content = data.get("response", "")
+                        result = {
+                            "response": content,
+                        }
+                        print("Response:", result)
+                        yield f"{json.dumps(result)}\n\n"
+                        await asyncio.sleep(0.01)  # Ajout explicite pour laisser la boucle rescheduler
 
-    if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Ollama error")
+                    except Exception as e:
+                        print("Erreur parsing:", e)
+                        continue
 
-    result = response.json()
-    return {"response": result["response"]}
+    headers = {
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",  # Pour nginx reverse proxy
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
