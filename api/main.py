@@ -189,13 +189,41 @@ async def discuss(req: DiscussionRequest):
 
 @app.post("/ask")
 async def ask(req: DiscussionRequest):
-    # get the agent
-    agent = await get_agent(mcp_tools)
+    async def event_stream():
+        # get the agent
+        agent = await get_agent(mcp_tools)
 
-    # create the agent context
-    agent_context = Context(agent)
-    response = await handle_user_message(req.text, agent, agent_context)
-    return {"response": response}
+        # create the agent context
+        agent_context = Context(agent)
+
+        handler = agent.run(req.text, ctx=agent_context)
+
+        yield f"data: {json.dumps({'type': 'final_response', 'content': 'Thinking...'})}\n\n"
+
+        # Stream agent events
+        async for event in handler.stream_events():
+            if isinstance(event, ToolCall):
+                yield f"data: {json.dumps({'type': 'tool_call', 'tool_name': event.tool_name, 'tool_kwargs': event.tool_kwargs})}\n\n"
+            elif isinstance(event, ToolCallResult):
+                yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': event.tool_name, 'tool_output': str(event.tool_output)})}\n\n"
+            # Add other event types from LlamaIndex workflow if you want to stream more details
+            # For example, if there's an event for LLM response chunks, you'd handle it here.
+            # LlamaIndex's agent stream_events primarily focuses on tool interactions.
+            # To stream the final LLM response from the agent, we'll need to get it at the end.
+            await asyncio.sleep(0.01) # Small delay to allow event loop to breathe
+
+        # After all events, get the final response from the agent
+        final_response = await handler
+        yield f"data: {json.dumps({'type': 'final_response', 'content': str(final_response)})}\n\n"
+
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream",
+        "X-Accel-Buffering": "no",  # For nginx reverse proxy
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
 
 async def handle_user_message(
     message_content: str,
