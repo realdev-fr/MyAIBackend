@@ -2,15 +2,60 @@ import asyncio
 import json
 import time
 
+import httptools
 from fastapi import FastAPI, HTTPException
+from llama_index.core.agent.workflow import FunctionAgent
 from pydantic import BaseModel
 import httpx
 from starlette.responses import StreamingResponse
+from llama_index.tools.mcp import BasicMCPClient, McpToolSpec
+from llama_index.llms.ollama import Ollama
+from llama_index.core.agent.workflow import (
+    FunctionAgent,
+    ToolCallResult,
+    ToolCall)
+
+from llama_index.core.workflow import Context
+
+MODEL_NAME = "mistral-small:latest"  # ou mistral, gemma, etc.
 
 app = FastAPI()
 
+mcp_client = BasicMCPClient("http://localhost:8000/sse")
+
+mcp_tools = McpToolSpec(client=mcp_client)
+
+SYSTEM_PROMPT = (
+    "You are a helpful assistant. "
+    "You must answer the user's questions."
+    "You have access to the following tools:"
+    " - weather: get the weather in a given location"
+    " - time: get the current time"
+)
+
+llm = Ollama(model=MODEL_NAME, request_timeout=120.0)
+
+
+async def get_agent(tools: McpToolSpec):
+    tools = await tools.to_tool_list_async()
+    return FunctionAgent(
+        name="Agent",
+        description="An agent that can do everything",
+        tools=tools,
+        llm=llm,
+        system_prompt=SYSTEM_PROMPT,
+    )
+
+async def get_tools():
+    tools = await mcp_tools.to_tool_list_async()
+    for tool in tools:
+        print(tool.metadata.name, tool.metadata.description)
+
+@app.on_event("startup")
+async def startup_event():
+    await get_tools()
+
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = "mistral-small:latest"  # ou mistral, gemma, etc.
 
 class TranslationRequest(BaseModel):
     source_lang: str
@@ -141,3 +186,29 @@ async def discuss(req: DiscussionRequest):
         "X-Accel-Buffering": "no",  # Pour nginx reverse proxy
     }
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+@app.post("/ask")
+async def ask(req: DiscussionRequest):
+    # get the agent
+    agent = await get_agent(mcp_tools)
+
+    # create the agent context
+    agent_context = Context(agent)
+    response = await handle_user_message(req.text, agent, agent_context)
+    return {"response": response}
+
+async def handle_user_message(
+    message_content: str,
+    agent: FunctionAgent,
+    agent_context: Context,
+    verbose: bool = False,
+):
+    handler = agent.run(message_content, ctx=agent_context)
+    async for event in handler.stream_events():
+        if verbose and type(event) == ToolCall:
+            print(f"Calling tool {event.tool_name} with kwargs {event.tool_kwargs}")
+        elif verbose and type(event) == ToolCallResult:
+            print(f"Tool {event.tool_name} returned {event.tool_output}")
+
+    response = await handler
+    return str(response)

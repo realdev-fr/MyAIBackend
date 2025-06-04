@@ -1,3 +1,8 @@
 fastapi
 uvicorn
 httpx
+fastapi-mcp
+llama-index
+llama-index-tools-mcp
+llama-index-core
+llama-index-llms-ollama
