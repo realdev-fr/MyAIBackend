@@ -17,12 +17,11 @@ def get_weather(location):
     lat = geocoding_data[0]["lat"]
     lon = geocoding_data[0]["lon"]
 
-    base_url = "http://api.openweathermap.org/data/2.5/weather"
+    base_url = "http://api.openweathermap.org/data/2.5/forecast"
     params = {
         "lat": lat,
         "lon": lon,
         "appid": API_KEY,
-        "units": "metric",  # Get temperature in Celsius
         "lang": "fr"  # Get response in French
     }
     try:
@@ -30,18 +29,15 @@ def get_weather(location):
         response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
         data = response.json()
 
-        if data.get("cod") == 200:  # Check if the request was successful
-            main_weather = data["weather"][0]["description"]
-            temperature = data["main"]["temp"]
-            feels_like = data["main"]["feels_like"]
-            humidity = data["main"]["humidity"]
-            wind_speed = data["wind"]["speed"]  # in m/s
+        print(data.get("cod"))
 
-            return (
-                f"Le temps à {location} est : {main_weather.capitalize()}. "
-                f"Température : {temperature}°C (ressenti : {feels_like}°C). "
-                f"Humidité : {humidity}%. Vent : {wind_speed} m/s."
-            )
+        if data.get("cod") == "200":  # Check if the request was successful
+            result = data["list"]
+            return json.dumps({
+                "type": "raw_weather_data",
+                "location": location,
+                "data": result  # C’est une liste, la météo sur 5 jours par tranche de 3 heures
+            })
         elif data.get("cod") == "404":
             return f"Désolé, je n'ai pas pu trouver la météo pour {location}. Veuillez vérifier le nom de la ville."
         else:

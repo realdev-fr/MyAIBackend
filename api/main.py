@@ -1,10 +1,17 @@
 import asyncio
+import base64
+import io
 import json
+import os
+import re
+import tempfile
 import time
+import wave
 
 import httptools
-from fastapi import FastAPI, HTTPException
-from llama_index.core.agent.workflow import FunctionAgent
+import numpy as np
+from fastapi import FastAPI, HTTPException, WebSocket
+from llama_index.core.agent.workflow import FunctionAgent, AgentInput
 from pydantic import BaseModel
 import httpx
 from starlette.responses import StreamingResponse
@@ -12,10 +19,18 @@ from llama_index.tools.mcp import BasicMCPClient, McpToolSpec
 from llama_index.llms.ollama import Ollama
 from llama_index.core.agent.workflow import (
     FunctionAgent,
-    ToolCallResult,
     ToolCall)
-
+from llama_index.core.agent.workflow.workflow_events import (
+    ToolCallResult,
+)
 from llama_index.core.workflow import Context
+from starlette.websockets import WebSocketDisconnect
+import soundfile as sf
+from faster_whisper import WhisperModel
+
+# Load faster-whisper model (only once)
+model_size = "small"
+asr_model = WhisperModel(model_size, compute_type="int8")
 
 MODEL_NAME = "mistral-small:latest"  # ou mistral, gemma, etc.
 
@@ -31,10 +46,27 @@ SYSTEM_PROMPT = (
     "You have access to the following tools:"
     " - weather: get the weather in a given location"
     " - time: get the current time"
+    ""
+    "Json returned by agents and tools must be returned to the client as they are received."
 )
 
-llm = Ollama(model=MODEL_NAME, request_timeout=120.0)
+llm = Ollama(model=MODEL_NAME, request_timeout=360.0)
 
+async def handle_user_message(
+    message_content: str,
+    agent: FunctionAgent,
+    agent_context: Context,
+    verbose: bool = False,
+):
+    handler = agent.run(message_content, ctx=agent_context)
+    async for event in handler.stream_events():
+        if verbose and type(event) == ToolCall:
+            print(f"Calling tool {event.tool_name} with kwargs {event.tool_kwargs}")
+        elif verbose and type(event) == ToolCallResult:
+            print(f"Tool {event.tool_name} returned {event.tool_output}")
+
+    response = await handler
+    return str(response)
 
 async def get_agent(tools: McpToolSpec):
     tools = await tools.to_tool_list_async()
@@ -202,10 +234,21 @@ async def ask(req: DiscussionRequest):
 
         # Stream agent events
         async for event in handler.stream_events():
+            print(event)
+            print("ISINSTANCE CHECK", isinstance(event, ToolCallResult))
+            print("ACTUAL TYPE", type(event))
+            print("EXPECTED TYPE", ToolCallResult)
+            print("SAME TYPE:", type(event) == ToolCallResult)
+            if isinstance(event, ToolCallResult):
+                try:
+                    tool_output_data = extract_json_from_tool_output_content(event.tool_output.content)
+                except Exception as e:
+                    print(f"Erreur extraction JSON tool_output: {e}")
+                    tool_output_data = {"raw": event.tool_output.content}
+                yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': event.tool_name, 'tool_output': tool_output_data})}\n\n"
+
             if isinstance(event, ToolCall):
                 yield f"data: {json.dumps({'type': 'tool_call', 'tool_name': event.tool_name, 'tool_kwargs': event.tool_kwargs})}\n\n"
-            elif isinstance(event, ToolCallResult):
-                yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': event.tool_name, 'tool_output': str(event.tool_output)})}\n\n"
             # Add other event types from LlamaIndex workflow if you want to stream more details
             # For example, if there's an event for LLM response chunks, you'd handle it here.
             # LlamaIndex's agent stream_events primarily focuses on tool interactions.
@@ -224,19 +267,90 @@ async def ask(req: DiscussionRequest):
     }
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
+def extract_json_from_tool_output_content(content_str: str):
+    # Regex pour capturer le contenu entre text='...' qui contient du JSON
+    match = re.search(r"text='({.*})'", content_str)
+    if not match:
+        raise ValueError("Impossible d'extraire le JSON de la chaîne content")
 
-async def handle_user_message(
-    message_content: str,
-    agent: FunctionAgent,
-    agent_context: Context,
-    verbose: bool = False,
-):
-    handler = agent.run(message_content, ctx=agent_context)
-    async for event in handler.stream_events():
-        if verbose and type(event) == ToolCall:
-            print(f"Calling tool {event.tool_name} with kwargs {event.tool_kwargs}")
-        elif verbose and type(event) == ToolCallResult:
-            print(f"Tool {event.tool_name} returned {event.tool_output}")
+    json_str = match.group(1)
+    return json.loads(json_str)
+# Paramètres audio (doivent correspondre à ceux du client Ktor)
+SAMPLE_RATE = 16000  # Hz
+AUDIO_FORMAT = "PCM_16BIT" # Le client envoie du PCM 16-bit
+CHANNELS = 1 # Mono
 
-    response = await handler
-    return str(response)
+# Taille du segment audio à envoyer à Whisper pour transcription (en secondes)
+# Un segment trop court peut réduire la précision, un trop long augmente la latence.
+TRANSCRIPTION_SEGMENT_DURATION_SECONDS = 2.0
+BYTES_PER_SAMPLE = 2 # 16-bit PCM = 2 bytes per sample
+BYTES_PER_SECOND = SAMPLE_RATE * BYTES_PER_SAMPLE * CHANNELS
+BUFFER_SIZE_FOR_TRANSCRIPTION = int(BYTES_PER_SECOND * TRANSCRIPTION_SEGMENT_DURATION_SECONDS)
+
+# Client HTTP asynchrone pour Ollama
+ollama_client = httpx.AsyncClient(timeout=60.0)
+
+@app.websocket("/ws/speak")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    print("Connexion WebSocket acceptée.")
+
+    audio_buffer = bytearray()  # Buffer pour accumuler les chunks audio
+    processing_task = None  # Tâche pour le traitement asynchrone des chunks
+
+    async def process_audio_buffer():
+        nonlocal audio_buffer
+        print(f"Audio buffer size: {len(audio_buffer)} bytes")
+        print(f"First 10 bytes: {audio_buffer[:10]}")
+        # Créer un fichier WAV temporaire à partir du buffer audio brut
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
+            tmp_path = tmp_wav.name
+            with wave.open(tmp_wav, "wb") as wf:
+                wf.setnchannels(1)          # mono
+                wf.setsampwidth(2)          # 16-bit
+                wf.setframerate(16000)      # 16kHz
+                wf.writeframes(audio_buffer)
+
+        audio_buffer = bytearray()  # Réinitialiser le buffer après extraction
+        print(f"Audio buffer size: {len(audio_buffer)} bytes")
+        print(f"First 10 bytes: {audio_buffer[:10]}")
+        try:
+            segments, _info = asr_model.transcribe(tmp_path, language="fr", beam_size=1)
+
+            for segment in segments:
+                transcription = segment.text.strip()
+                print(f"Transcription: {transcription}")
+                if transcription:
+                    await websocket.send_json({
+                        "type": "transcription",
+                        "text": transcription
+                    })
+        finally:
+            print(f"WAV temp saved at: {tmp_path}")
+            os.unlink(tmp_path)  # Nettoyer le fichier temporaire
+
+    try:
+        while True:
+            # Réception d'un chunk audio
+            audio_chunk = await websocket.receive_bytes()
+            audio_buffer.extend(audio_chunk)
+
+            # Déclencher traitement si le buffer atteint ~1s
+            if len(audio_buffer) > 32000:  # 16000 samples/sec * 2 bytes/sample = ~32Ko
+                if processing_task and not processing_task.done():
+                    await processing_task
+                processing_task = asyncio.create_task(process_audio_buffer())
+
+    except WebSocketDisconnect:
+        print("Connexion WebSocket déconnectée.")
+    except Exception as e:
+        print(f"Erreur WebSocket: {e}")
+    finally:
+        if processing_task:
+            processing_task.cancel()
+            try:
+                await processing_task
+            except asyncio.CancelledError:
+                pass
+
+        print("Fermeture de la connexion WebSocket.")

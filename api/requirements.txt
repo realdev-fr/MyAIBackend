@@ -7,3 +7,7 @@ llama-index-tools-mcp
 llama-index-core
 llama-index-llms-ollama
 requests
+websockets
+scipy
+soundfile
+faster-whisper
