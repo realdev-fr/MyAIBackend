@@ -11,3 +11,4 @@ websockets
 scipy
 soundfile
 faster-whisper
+python-kasa

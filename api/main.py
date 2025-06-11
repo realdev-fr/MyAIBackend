@@ -11,6 +11,7 @@ import wave
 import httptools
 import numpy as np
 from fastapi import FastAPI, HTTPException, WebSocket
+from kasa import Discover
 from llama_index.core.agent.workflow import FunctionAgent, AgentInput
 from pydantic import BaseModel
 import httpx
@@ -96,6 +97,19 @@ class TranslationRequest(BaseModel):
 
 class DiscussionRequest(BaseModel):
     text: str
+
+@app.get("/turn_on_devices")
+async def turn_on_devices():
+    dev = await Discover.discover_single("192.168.1.40", username="natheitz.nh@gmail.com", password="Louneige07,")
+    print(dev.mac)
+    await dev.turn_on()
+    await dev.update()
+
+@app.get("/turn_off_devices")
+async def turn_off_devices():
+    dev = await Discover.discover_single("192.168.1.40", username="natheitz.nh@gmail.com", password="Louneige07,")
+    await dev.turn_off()
+    await dev.update()
 
 @app.post("/translate")
 async def translate(req: TranslationRequest):
