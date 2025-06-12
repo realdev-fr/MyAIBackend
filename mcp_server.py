@@ -3,6 +3,7 @@ import json
 import time
 
 import requests
+from kasa import Discover
 from mcp.server import FastMCP
 
 mcp = FastMCP("discuss")
@@ -56,6 +57,24 @@ def get_weather(location):
 def get_time():
 
     return f"Le temps est {time.strftime('%H:%M:%S')}"
+
+
+deviceMap = {
+    "salon": "192.168.1.40",
+    "Salon Light": "192.168.1.40",
+    "Lumière du salon": "192.168.1.40",
+    "Salon Lumière": "192.168.1.40",
+}
+
+@mcp.tool("home_automation_toggle_device", "Toggle the state of a device (like an electrical outlet), on or off")
+async def home_automation_toggle_device(device_name, state):
+    print("Device name : ", device_name)
+    print("State : ", state)
+    dev = await Discover.discover_single(deviceMap[device_name], username="natheitz.nh@gmail.com", password="Louneige07,")
+    if state.casefold() == "on":
+        await dev.turn_on()
+    elif state.casefold() == "off":
+        await dev.turn_off()
 
 if __name__ == "__main__":
     # Start the server

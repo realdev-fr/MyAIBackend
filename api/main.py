@@ -43,10 +43,11 @@ mcp_tools = McpToolSpec(client=mcp_client)
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant. "
-    "You must answer the user's questions."
+    "You must answer the user's questions, or perform the requested tasks."
     "You have access to the following tools:"
     " - weather: get the weather in a given location"
     " - time: get the current time"
+    " - home_automation_toggle_device: toggle a device in the home automation system"
     ""
     "Json returned by agents and tools must be returned to the client as they are received."
 )
