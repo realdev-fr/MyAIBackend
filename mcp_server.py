@@ -1,9 +1,11 @@
 import argparse
 import json
 import time
+from typing import Annotated
 
 import requests
 from kasa import Discover
+from llama_index.core.tools import ToolMetadata
 from mcp.server import FastMCP
 
 mcp = FastMCP("discuss")
@@ -64,6 +66,10 @@ deviceMap = {
     "Salon Light": "192.168.1.40",
     "Lumière du salon": "192.168.1.40",
     "Salon Lumière": "192.168.1.40",
+    "chambre": "192.168.1.18",
+    "Room Light": "192.168.1.18",
+    "Lumière de la chambre": "192.168.1.18",
+    "Chambre Lumière": "192.168.1.18",
 }
 
 @mcp.tool("home_automation_toggle_device", "Toggle the state of a device (like an electrical outlet), on or off")

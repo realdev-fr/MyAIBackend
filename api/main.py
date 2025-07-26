@@ -47,7 +47,9 @@ SYSTEM_PROMPT = (
     "You have access to the following tools:"
     " - weather: get the weather in a given location"
     " - time: get the current time"
-    " - home_automation_toggle_device: toggle a device in the home automation system"
+    " - home_automation_toggle_device: toggle a device in the home automation system. Here are the available devices:"
+    "   - salon"
+    "   - chambre"
     ""
     "Json returned by agents and tools must be returned to the client as they are received."
 )
