@@ -276,7 +276,7 @@ async def run_agent_stream(req: DiscussionRequest):
     ctx = Context(agent)
     handler = agent.run(req.text, ctx=ctx)
 
-    yield {'type': 'final_response', 'content': 'Thinking...'}
+    yield {'type': 'final_response', 'content': 'Thinking...\n'}
 
     async for event in handler.stream_events():
         if isinstance(event, ToolCallResult):
