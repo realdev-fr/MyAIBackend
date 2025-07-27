@@ -339,8 +339,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"Transcription: {transcription}")
                 if transcription:
                     await websocket.send_json({
-                        "type": "transcription",
-                        "text": transcription
+                        "response": transcription
                     })
         finally:
             print(f"WAV temp saved at: {tmp_path}")
