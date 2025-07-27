@@ -219,7 +219,8 @@ async def discuss(req: DiscussionRequest):
                         data = json.loads(line)
                         content = data.get("response", "")
                         result = {
-                            "response": content,
+                            "type": "final_response",
+                            "content": content,
                         }
                         print("Response:", result)
                         yield f"{json.dumps(result)}\n\n"
@@ -239,48 +240,13 @@ async def discuss(req: DiscussionRequest):
 @app.post("/ask")
 async def ask(req: DiscussionRequest):
     async def event_stream():
-        # get the agent
-        agent = await get_agent(mcp_tools)
-
-        # create the agent context
-        agent_context = Context(agent)
-
-        handler = agent.run(req.text, ctx=agent_context)
-
-        yield f"data: {json.dumps({'type': 'final_response', 'content': 'Thinking...'})}\n\n"
-
-        # Stream agent events
-        async for event in handler.stream_events():
-            print(event)
-            print("ISINSTANCE CHECK", isinstance(event, ToolCallResult))
-            print("ACTUAL TYPE", type(event))
-            print("EXPECTED TYPE", ToolCallResult)
-            print("SAME TYPE:", type(event) == ToolCallResult)
-            if isinstance(event, ToolCallResult):
-                try:
-                    tool_output_data = extract_json_from_tool_output_content(event.tool_output.content)
-                except Exception as e:
-                    print(f"Erreur extraction JSON tool_output: {e}")
-                    tool_output_data = {"raw": event.tool_output.content}
-                yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': event.tool_name, 'tool_output': tool_output_data})}\n\n"
-
-            if isinstance(event, ToolCall):
-                yield f"data: {json.dumps({'type': 'tool_call', 'tool_name': event.tool_name, 'tool_kwargs': event.tool_kwargs})}\n\n"
-            # Add other event types from LlamaIndex workflow if you want to stream more details
-            # For example, if there's an event for LLM response chunks, you'd handle it here.
-            # LlamaIndex's agent stream_events primarily focuses on tool interactions.
-            # To stream the final LLM response from the agent, we'll need to get it at the end.
-            await asyncio.sleep(0.01) # Small delay to allow event loop to breathe
-
-        # After all events, get the final response from the agent
-        final_response = await handler
-        yield f"data: {json.dumps({'type': 'final_response', 'content': str(final_response)})}\n\n"
-
+        async for event in run_agent_stream(req):
+            yield f"{json.dumps(event)}\n\n"
 
     headers = {
         "Cache-Control": "no-cache",
         "Content-Type": "text/event-stream",
-        "X-Accel-Buffering": "no",  # For nginx reverse proxy
+        "X-Accel-Buffering": "no",
     }
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
@@ -303,6 +269,32 @@ TRANSCRIPTION_SEGMENT_DURATION_SECONDS = 2.0
 BYTES_PER_SAMPLE = 2 # 16-bit PCM = 2 bytes per sample
 BYTES_PER_SECOND = SAMPLE_RATE * BYTES_PER_SAMPLE * CHANNELS
 BUFFER_SIZE_FOR_TRANSCRIPTION = int(BYTES_PER_SECOND * TRANSCRIPTION_SEGMENT_DURATION_SECONDS)
+
+
+async def run_agent_stream(req: DiscussionRequest):
+    agent = await get_agent(mcp_tools)
+    ctx = Context(agent)
+    handler = agent.run(req.text, ctx=ctx)
+
+    yield {'type': 'final_response', 'content': 'Thinking...'}
+
+    async for event in handler.stream_events():
+        if isinstance(event, ToolCallResult):
+            try:
+                tool_output_data = extract_json_from_tool_output_content(event.tool_output.content)
+            except Exception as e:
+                print(f"Erreur extraction JSON tool_output: {e}")
+                tool_output_data = {"raw": event.tool_output.content}
+            yield {'type': 'tool_result', 'tool_name': event.tool_name, 'tool_output': tool_output_data}
+
+        elif isinstance(event, ToolCall):
+            yield {'type': 'tool_call', 'tool_name': event.tool_name, 'tool_kwargs': event.tool_kwargs}
+
+        await asyncio.sleep(0.01)
+
+    final_response = await handler
+    yield {'type': 'final_response', 'content': str(final_response)}
+
 
 # Client HTTP asynchrone pour Ollama
 ollama_client = httpx.AsyncClient(timeout=60.0)
@@ -338,9 +330,17 @@ async def websocket_endpoint(websocket: WebSocket):
                 transcription = segment.text.strip()
                 print(f"Transcription: {transcription}")
                 if transcription:
+                    ask_req = DiscussionRequest(text=segment.text)
+                    async for event in run_agent_stream(ask_req):
+                        print("Event reçu dans WebSocket :", event)
+                        await websocket.send_json(event)
                     await websocket.send_json({
-                        "response": transcription
+                        "content": segment.text
                     })
+
+                    # await websocket.send_json({
+                    #     "response": extract_json_from_tool_output_content(response.content)
+                    # })
         finally:
             print(f"WAV temp saved at: {tmp_path}")
             os.unlink(tmp_path)  # Nettoyer le fichier temporaire
