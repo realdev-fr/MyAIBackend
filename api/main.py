@@ -28,6 +28,8 @@ from llama_index.core.workflow import Context
 from starlette.websockets import WebSocketDisconnect
 import soundfile as sf
 from faster_whisper import WhisperModel
+from api.higgs.api_routes import router as higgs_router
+from api.models.discussion import DiscussionRequest
 
 # Load faster-whisper model (only once)
 model_size = "small"
@@ -36,6 +38,8 @@ asr_model = WhisperModel(model_size, compute_type="int8")
 MODEL_NAME = "mistral-small:latest"  # ou mistral, gemma, etc.
 
 app = FastAPI()
+
+app.include_router(higgs_router)
 
 mcp_client = BasicMCPClient("http://localhost:8000/sse")
 
@@ -96,9 +100,6 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 class TranslationRequest(BaseModel):
     source_lang: str
     target_lang: str
-    text: str
-
-class DiscussionRequest(BaseModel):
     text: str
 
 @app.get("/turn_on_devices")
