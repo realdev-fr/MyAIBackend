@@ -33,8 +33,6 @@ def get_weather(location):
         response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
         data = response.json()
 
-        print(data.get("cod"))
-
         if data.get("cod") == "200":  # Check if the request was successful
             result = data["list"]
             return json.dumps({

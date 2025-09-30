@@ -59,7 +59,8 @@ SYSTEM_PROMPT = (
     "   - salon"
     "   - chambre"
     ""
-    "Json returned by agents and tools must be returned to the client as they are received."
+    "When using the weather tool only, after calling the tool, simply respond with 'Done' without any additional explanation. "
+    "The weather tool only result will be sent directly to the client in JSON format for processing."
 )
 
 llm = Ollama(model=MODEL_NAME, request_timeout=360.0)
@@ -256,7 +257,13 @@ async def ask(req: DiscussionRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
 def extract_json_from_tool_output_content(content_str: str):
-    # Regex pour capturer le contenu entre text='...' qui contient du JSON
+    # Essayer d'abord de parser directement comme JSON
+    try:
+        return json.loads(content_str)
+    except json.JSONDecodeError:
+        pass
+
+    # Sinon, regex pour capturer le contenu entre text='...' qui contient du JSON
     match = re.search(r"text='({.*})'", content_str)
     if not match:
         raise ValueError("Impossible d'extraire le JSON de la chaîne content")
@@ -283,7 +290,12 @@ async def run_agent_stream(req: DiscussionRequest):
 
     yield {'type': 'final_response', 'content': 'Thinking...\n'}
 
+    print("Début du stream des événements")
+
     async for event in handler.stream_events():
+        print(f"Event reçu: {type(event).__name__}")
+        event_type = type(event).__name__
+
         if isinstance(event, ToolCallResult):
             try:
                 tool_output_data = extract_json_from_tool_output_content(event.tool_output.content)
@@ -295,9 +307,17 @@ async def run_agent_stream(req: DiscussionRequest):
         elif isinstance(event, ToolCall):
             yield {'type': 'tool_call', 'tool_name': event.tool_name, 'tool_kwargs': event.tool_kwargs}
 
+        elif event_type == "AgentStream":
+            # Stream la réponse de l'agent en temps réel
+            if hasattr(event, 'delta') and event.delta:
+                print(f"AgentStream delta: {event.delta}")
+                yield {'type': 'agent_response', 'content': event.delta}
+
         await asyncio.sleep(0.01)
 
+    print("Fin du stream des événements")
     final_response = await handler
+    print(f"Final response: {final_response}")
     yield {'type': 'final_response', 'content': str(final_response)}
 
 
