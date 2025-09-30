@@ -3,6 +3,9 @@ import json
 import sys
 import time
 from typing import Annotated
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 import requests
 from kasa import Discover
@@ -90,6 +93,62 @@ async def home_automation_toggle_device(device_name, state):
     sys.stdout.write(json.dumps(message) + "\n")
     sys.stdout.flush()
     return message
+
+@mcp.tool("send_email", "Send an email via Gmail SMTP")
+def send_email(to_email: str, subject: str, body: str):
+    """
+    Send an email using Gmail SMTP.
+
+    Args:
+        to_email: Recipient email address
+        subject: Email subject
+        body: Email body content
+    """
+    # Configuration Gmail SMTP
+    SMTP_SERVER = "smtp.gmail.com"
+    SMTP_PORT = 587
+    GMAIL_USER = "realdev.company@gmail.com"
+    GMAIL_APP_PASSWORD = "iyxx yijq kymn prmh"  # À remplacer par un mot de passe d'application
+
+    try:
+        # Créer le message
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_USER
+        msg['To'] = to_email
+        msg['Subject'] = subject
+
+        # Ajouter le corps du message
+        msg.attach(MIMEText(body, 'plain'))
+
+        # Connexion au serveur SMTP
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()  # Activer le chiffrement TLS
+        server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+
+        # Envoyer l'email
+        server.send_message(msg)
+        server.quit()
+
+        return json.dumps({
+            "status": "success",
+            "message": f"Email envoyé avec succès à {to_email}"
+        })
+
+    except smtplib.SMTPAuthenticationError:
+        return json.dumps({
+            "status": "error",
+            "message": "Erreur d'authentification SMTP. Vérifiez vos identifiants."
+        })
+    except smtplib.SMTPException as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Erreur SMTP: {str(e)}"
+        })
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Erreur lors de l'envoi de l'email: {str(e)}"
+        })
 
 if __name__ == "__main__":
     # Start the server

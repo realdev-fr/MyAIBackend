@@ -58,6 +58,7 @@ SYSTEM_PROMPT = (
     " - home_automation_toggle_device: toggle a device in the home automation system. Here are the available devices:"
     "   - salon"
     "   - chambre"
+    " - send_email: send an email via Gmail SMTP. Parameters: to_email (recipient), subject (email subject), body (email content). Beautify the body content to be polite, and beautify the structure."
     ""
     "When using the weather tool only, after calling the tool, simply respond with 'Done' without any additional explanation. "
     "The weather tool only result will be sent directly to the client in JSON format for processing."
