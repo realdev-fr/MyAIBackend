@@ -7,15 +7,19 @@ import re
 import tempfile
 import time
 import wave
+from datetime import datetime
+from typing import Optional
 
 import httptools
 import numpy as np
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket, UploadFile, File, Form
 from kasa import Discover
 from llama_index.core.agent.workflow import FunctionAgent, AgentInput
+import magic
+
 from pydantic import BaseModel
 import httpx
-from starlette.responses import StreamingResponse
+from starlette.responses import StreamingResponse, JSONResponse
 from llama_index.tools.mcp import BasicMCPClient, McpToolSpec
 from llama_index.llms.ollama import Ollama
 from llama_index.core.agent.workflow import (
@@ -371,3 +375,101 @@ async def websocket_endpoint(websocket: WebSocket):
                 pass
 
         print("Fermeture de la connexion WebSocket.")
+
+# Configuration
+N8N_WEBHOOK_URL = "http://83.115.88.108:5678/webhook/claude-image-webhook"
+#N8N_WEBHOOK_URL = "http://83.115.88.108:5678/webhook-test/claude-image-webhook"
+ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+
+@app.post("/upload-image")
+async def upload_image(
+        file: UploadFile = File(...),
+        message_text: Optional[str] = Form(""),
+        source: Optional[str] = Form("FastAPI Upload")
+):
+    """
+    Upload une image et l'envoie au webhook n8n
+
+    - **file**: Fichier image à uploader
+    - **message_text**: Texte accompagnant l'image (laisser vide pour "image seule")
+    - **source**: Source du message (par défaut: "FastAPI Upload")
+    """
+
+    try:
+        # Vérifier la taille du fichier
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Fichier trop volumineux. Maximum: {MAX_FILE_SIZE / 1024 / 1024}MB"
+            )
+
+        # Vérifier le type MIME
+        mime_type = magic.from_buffer(content, mime=True)
+        if mime_type not in ALLOWED_IMAGE_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Type de fichier non supporté. Types autorisés: {ALLOWED_IMAGE_TYPES}"
+            )
+
+        # Encoder l'image en base64
+        base64_content = base64.b64encode(content).decode('utf-8')
+
+        # Préparer les données pour n8n
+        webhook_data = {
+            "hasAttachment": True,
+            "messageText": message_text.strip(),
+            "timestamp": datetime.now().isoformat(),
+            "source": source,
+            "attachments": [
+                {
+                    "filename": file.filename,
+                    "content": base64_content,
+                    "contentType": mime_type,
+                    "size": len(content)
+                }
+            ]
+        }
+
+        # Envoyer au webhook n8n
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                N8N_WEBHOOK_URL,
+                json=webhook_data,
+                headers={"Content-Type": "application/json"},
+                timeout=30.0
+            )
+
+            if response.status_code == 200:
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "success": True,
+                        "message": "Image envoyée avec succès au webhook n8n",
+                        "file_info": {
+                            "filename": file.filename,
+                            "size": len(content),
+                            "mime_type": mime_type
+                        },
+                        "webhook_response": response.status_code,
+                        "will_send_email": message_text.strip() == ""
+                    }
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Erreur webhook n8n: {response.status_code} - {response.text}"
+                )
+
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="Timeout lors de l'envoi au webhook n8n"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors du traitement: {str(e)}"
+        )

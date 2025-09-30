@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 import time
 from typing import Annotated
 
@@ -74,17 +75,27 @@ deviceMap = {
 
 @mcp.tool("home_automation_toggle_device", "Toggle the state of a device (like an electrical outlet), on or off")
 async def home_automation_toggle_device(device_name, state):
-    print("Device name : ", device_name)
-    print("State : ", state)
+    #print("Device name : ", device_name)
+    #print("State : ", state)
     dev = await Discover.discover_single(deviceMap[device_name], username="natheitz.nh@gmail.com", password="Louneige07,")
     if state.casefold() == "on":
         await dev.turn_on()
     elif state.casefold() == "off":
         await dev.turn_off()
 
+    message = {
+        "result": {
+            "status": "success",
+            "message": f"{device_name} switched {state.lower()}"
+        }
+    }
+    sys.stdout.write(json.dumps(message) + "\n")
+    sys.stdout.flush()
+    return message
+
 if __name__ == "__main__":
     # Start the server
-    print("🚀Starting server... ")
+    #print("🚀Starting server... ")
 
     # Debug Mode
     #  uv run mcp dev server.py
