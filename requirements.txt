@@ -1,0 +1,29 @@
+# Web Framework
+fastapi
+uvicorn
+httpx
+websockets
+
+# LlamaIndex
+llama-index
+llama-index-core
+llama-index-tools-mcp
+llama-index-llms-ollama
+
+# MCP Server
+mcp
+fastapi-mcp
+
+# Smart Home
+python-kasa
+
+# Audio Processing
+faster-whisper
+scipy
+soundfile
+
+# Utilities
+requests
+python-dotenv
+python-magic
+pydantic

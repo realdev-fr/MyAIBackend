@@ -2,21 +2,25 @@ import argparse
 import json
 import sys
 import time
+import os
 from typing import Annotated
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
 
 import requests
 from kasa import Discover
 from llama_index.core.tools import ToolMetadata
 from mcp.server import FastMCP
 
+load_dotenv()
+
 mcp = FastMCP("discuss")
 
 @mcp.tool("weather", "Get the weather in a location")
 def get_weather(location):
-    API_KEY = "4324d968d209b453e923f375fa2ce14b"
+    API_KEY = os.getenv("OPENWEATHER_API_KEY")
     """First use geocoding to get the latitude and longitude"""
     geocoding_url = f"http://api.openweathermap.org/geo/1.0/direct?q={location}&appid={API_KEY}"
     geocoding_response = requests.get(geocoding_url)
@@ -64,10 +68,10 @@ def get_time():
 
 
 deviceMap = {
-    "salon": "192.168.1.40",
-    "Salon Light": "192.168.1.40",
-    "Lumière du salon": "192.168.1.40",
-    "Salon Lumière": "192.168.1.40",
+    "salon": "192.168.2.138",#192.168.1.40
+    "Salon Light": "192.168.2.138",
+    "Lumière du salon": "192.168.2.138",
+    "Salon Lumière": "192.168.2.138",
     "chambre": "192.168.1.18",
     "Room Light": "192.168.1.18",
     "Lumière de la chambre": "192.168.1.18",
@@ -78,7 +82,7 @@ deviceMap = {
 async def home_automation_toggle_device(device_name, state):
     #print("Device name : ", device_name)
     #print("State : ", state)
-    dev = await Discover.discover_single(deviceMap[device_name], username="natheitz.nh@gmail.com", password="Louneige07,")
+    dev = await Discover.discover_single(deviceMap[device_name], username=os.getenv("KASA_USERNAME"), password=os.getenv("KASA_PASSWORD"))
     if state.casefold() == "on":
         await dev.turn_on()
     elif state.casefold() == "off":
@@ -107,8 +111,8 @@ def send_email(to_email: str, subject: str, body: str):
     # Configuration Gmail SMTP
     SMTP_SERVER = "smtp.gmail.com"
     SMTP_PORT = 587
-    GMAIL_USER = "realdev.company@gmail.com"
-    GMAIL_APP_PASSWORD = "iyxx yijq kymn prmh"  # À remplacer par un mot de passe d'application
+    GMAIL_USER = os.getenv("GMAIL_USER")
+    GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
     try:
         # Créer le message

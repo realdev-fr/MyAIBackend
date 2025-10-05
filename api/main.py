@@ -1,20 +1,16 @@
 import asyncio
 import base64
-import io
 import json
 import os
 import re
 import tempfile
-import time
 import wave
 from datetime import datetime
 from typing import Optional
 
-import httptools
-import numpy as np
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, UploadFile, File, Form
 from kasa import Discover
-from llama_index.core.agent.workflow import FunctionAgent, AgentInput
 import magic
 
 from pydantic import BaseModel
@@ -30,20 +26,19 @@ from llama_index.core.agent.workflow.workflow_events import (
 )
 from llama_index.core.workflow import Context
 from starlette.websockets import WebSocketDisconnect
-import soundfile as sf
 from faster_whisper import WhisperModel
-from api.higgs.api_routes import router as higgs_router
 from api.models.discussion import DiscussionRequest
 
 # Load faster-whisper model (only once)
+
+load_dotenv()
+
 model_size = "small"
 asr_model = WhisperModel(model_size, compute_type="int8")
 
 MODEL_NAME = "mistral-small:latest"  # ou mistral, gemma, etc.
 
 app = FastAPI()
-
-app.include_router(higgs_router)
 
 mcp_client = BasicMCPClient("http://localhost:8000/sse")
 
@@ -110,14 +105,14 @@ class TranslationRequest(BaseModel):
 
 @app.get("/turn_on_devices")
 async def turn_on_devices():
-    dev = await Discover.discover_single("192.168.1.40", username="natheitz.nh@gmail.com", password="Louneige07,")
+    dev = await Discover.discover_single("192.168.1.40", username=os.getenv("KASA_USERNAME"), password=os.getenv("KASA_PASSWORD"))
     print(dev.mac)
     await dev.turn_on()
     await dev.update()
 
 @app.get("/turn_off_devices")
 async def turn_off_devices():
-    dev = await Discover.discover_single("192.168.1.40", username="natheitz.nh@gmail.com", password="Louneige07,")
+    dev = await Discover.discover_single("192.168.1.40", username=os.getenv("KASA_USERNAME"), password=os.getenv("KASA_PASSWORD"))
     await dev.turn_off()
     await dev.update()
 
@@ -398,7 +393,7 @@ async def websocket_endpoint(websocket: WebSocket):
         print("Fermeture de la connexion WebSocket.")
 
 # Configuration
-N8N_WEBHOOK_URL = "http://83.115.88.108:5678/webhook/claude-image-webhook"
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL")
 #N8N_WEBHOOK_URL = "http://83.115.88.108:5678/webhook-test/claude-image-webhook"
 ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
