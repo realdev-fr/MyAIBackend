@@ -68,14 +68,14 @@ def get_time():
 
 
 deviceMap = {
-    "salon": "192.168.2.138",#192.168.1.40
-    "Salon Light": "192.168.2.138",
-    "Lumière du salon": "192.168.2.138",
-    "Salon Lumière": "192.168.2.138",
-    "chambre": "192.168.1.18",
-    "Room Light": "192.168.1.18",
-    "Lumière de la chambre": "192.168.1.18",
-    "Chambre Lumière": "192.168.1.18",
+    "salon": os.getenv("KASA_FIRST_DEVICE_IP"),#192.168.1.40
+    "Salon Light": os.getenv("KASA_FIRST_DEVICE_IP"),
+    "Lumière du salon": os.getenv("KASA_FIRST_DEVICE_IP"),
+    "Salon Lumière": os.getenv("KASA_FIRST_DEVICE_IP"),
+    "chambre": os.getenv("KASA_SECOND_DEVICE_IP"),
+    "Room Light": os.getenv("KASA_SECOND_DEVICE_IP"),
+    "Lumière de la chambre": os.getenv("KASA_SECOND_DEVICE_IP"),
+    "Chambre Lumière": os.getenv("KASA_SECOND_DEVICE_IP"),
 }
 
 @mcp.tool("home_automation_toggle_device", "Toggle the state of a device (like an electrical outlet), on or off")

@@ -40,7 +40,8 @@ MODEL_NAME = "mistral-small:latest"  # ou mistral, gemma, etc.
 
 app = FastAPI()
 
-mcp_client = BasicMCPClient("http://localhost:8000/sse")
+mcp_port = os.getenv("MCP_PORT")
+mcp_client = BasicMCPClient("http://localhost:" + mcp_port + "/sse")
 
 mcp_tools = McpToolSpec(client=mcp_client)
 
@@ -105,14 +106,14 @@ class TranslationRequest(BaseModel):
 
 @app.get("/turn_on_devices")
 async def turn_on_devices():
-    dev = await Discover.discover_single("192.168.1.40", username=os.getenv("KASA_USERNAME"), password=os.getenv("KASA_PASSWORD"))
+    dev = await Discover.discover_single(os.getenv("KASA_FIRST_DEVICE_IP"), username=os.getenv("KASA_USERNAME"), password=os.getenv("KASA_PASSWORD"))
     print(dev.mac)
     await dev.turn_on()
     await dev.update()
 
 @app.get("/turn_off_devices")
 async def turn_off_devices():
-    dev = await Discover.discover_single("192.168.1.40", username=os.getenv("KASA_USERNAME"), password=os.getenv("KASA_PASSWORD"))
+    dev = await Discover.discover_single(os.getenv("KASA_FIRST_DEVICE_IP"), username=os.getenv("KASA_USERNAME"), password=os.getenv("KASA_PASSWORD"))
     await dev.turn_off()
     await dev.update()
 
