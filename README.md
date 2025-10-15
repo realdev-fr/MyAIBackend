@@ -303,6 +303,10 @@ def mon_outil(param1: str):
 
 Éditer la variable `SYSTEM_PROMPT` dans `api/main.py` pour personnaliser le comportement de l'agent.
 
+## Contact
+
+Mail : realdev.company@gmail.com
+
 ## Auteur
 
 Développé avec passion par RealDev
