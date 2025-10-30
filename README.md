@@ -1,4 +1,4 @@
-# MyAI - Assistant IA Multi-fonctionnel
+# MyRealAI - Assistant IA Multi-fonctionnel
 
 ## Description du Projet
 
