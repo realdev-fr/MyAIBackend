@@ -1,8 +1,8 @@
-# MyAI - Assistant IA Multi-fonctionnel
+# MyRealAI - Assistant IA Multi-fonctionnel
 
 ## Description du Projet
 
-MyAI est un système d'assistant intelligent multi-fonctionnel basé sur des LLM locaux (via Ollama) et le protocole MCP (Model Context Protocol). Le projet combine plusieurs services pour créer un assistant capable d'interagir avec différents systèmes : météo, domotique, emails, reconnaissance vocale, traduction, etc.
+MyRealAI est un système d'assistant intelligent multi-fonctionnel basé sur des LLM locaux (via Ollama) et le protocole MCP (Model Context Protocol). Le projet combine plusieurs services pour créer un assistant capable d'interagir avec différents systèmes : météo, domotique, emails, reconnaissance vocale, traduction, etc.
 
 ### Architecture
 
@@ -303,9 +303,9 @@ def mon_outil(param1: str):
 
 Éditer la variable `SYSTEM_PROMPT` dans `api/main.py` pour personnaliser le comportement de l'agent.
 
-## Licence
+## Contact
 
-Ce projet est à usage personnel et éducatif.
+Mail : realdev.company@gmail.com
 
 ## Auteur
 
