@@ -1,8 +1,11 @@
 import argparse
+import datetime
 import json
+import re
 import sys
 import time
 import os
+from pathlib import Path
 from typing import Annotated
 import smtplib
 from email.mime.text import MIMEText
@@ -17,6 +20,11 @@ from mcp.server import FastMCP
 load_dotenv()
 
 mcp = FastMCP("discuss")
+
+LLAMA_URL   = os.getenv("LLAMA_URL",   "http://localhost:8080")
+LLAMA_MODEL = os.getenv("LLAMA_MODEL", "gemma-4-E2B-it-GGUF")
+PDF_OUTPUT_DIR = Path(os.getenv("PDF_OUTPUT_DIR", str(Path.home() / "Documents" / "PDFs")))
+PDF_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 @mcp.tool("weather", "Get the weather in a location")
 def get_weather(location):
@@ -154,6 +162,167 @@ def send_email(to_email: str, subject: str, body: str):
             "message": f"Erreur lors de l'envoi de l'email: {str(e)}"
         })
 
+def _latex_to_unicode(text: str) -> str:
+    """Convertit la notation LaTeX mathématique en texte Unicode lisible."""
+    # Chiffres/opérateurs + n (ⁿ U+207F présent dans Arial Unicode)
+    # Les autres lettres (e, a, b…) restent en ASCII ^x car absentes de la police
+    SUP = str.maketrans("0123456789+-n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿ")
+    SUB = str.maketrans("0123456789",    "₀₁₂₃₄₅₆₇₈₉")
+
+    MATHBB  = {'R': 'ℝ', 'N': 'ℕ', 'Z': 'ℤ', 'Q': 'ℚ', 'C': 'ℂ'}
+    # Letterlike Symbols BMP (Arial Unicode OK) — A, C, D, G, J, K, N, O, P, Q, S, T, U, V, W, X, Y, Z
+    # n'ont pas d'équivalent BMP → lettre ordinaire
+    MATHCAL = {'B': 'ℬ', 'E': 'ℰ', 'F': 'ℱ', 'H': 'ℋ', 'I': 'ℐ', 'L': 'ℒ', 'M': 'ℳ', 'R': 'ℛ'}
+    # Ordre important : les plus longs d'abord pour éviter les conflits
+    SYMBOLS = [
+        (r'\\frac\{([^}]+)\}\{([^}]+)\}', r'(\1)/(\2)'),
+        (r'\\sqrt\{([^}]+)\}',             r'√(\1)'),
+        (r'\\mathbb\{([A-Z])\}',  lambda m: MATHBB.get(m.group(1),  m.group(1))),
+        (r'\\mathcal\{([A-Z])\}', lambda m: MATHCAL.get(m.group(1), m.group(1))),
+        (r'\\infty',        '∞'),  (r'\\int',          '∫'),  (r'\\times',  '×'),
+        (r'\\leq',          '≤'),  (r'\\geq',          '≥'),  (r'\\neq',    '≠'),
+        (r'\\notin',        '∉'),  (r'\\in\b',         '∈'),  (r'\\subset', '⊂'),
+        (r'\\alpha',        'α'),  (r'\\beta',         'β'),  (r'\\gamma',  'γ'),
+        (r'\\delta',        'δ'),  (r'\\Delta',        'Δ'),  (r'\\pi\b',   'π'),
+        (r'\\theta',        'θ'),  (r'\\lambda',       'λ'),  (r'\\mu\b',   'μ'),
+        (r'\\sigma',        'σ'),  (r'\\Sigma',        'Σ'),  (r'\\phi',    'φ'),
+        (r'\\omega',        'ω'),  (r'\\Omega',        'Ω'),  (r'\\epsilon','ε'),
+        (r'\\ln\b',         'ln'), (r'\\log\b',        'log'),(r'\\cos\b',  'cos'),
+        (r'\\sin\b',        'sin'),(r'\\tan\b',        'tan'),(r'\\exp\b',  'exp'),
+        (r'\\lim\b',        'lim'),(r'\\sum',          'Σ'),  (r'\\prod',   'Π'),
+        (r'\\cdot',         '·'),  (r'\\ldots',        '…'),  (r'\\pm',     '±'),
+        (r'\\Leftrightarrow','⟺'),(r'\\Rightarrow',   '⇒'),  (r'\\iff',      '⟺'),
+        (r'\\implies',      '⇒'),  (r'\\ell\b',        'ℓ'),
+        (r'\\rightarrow',   '→'),  (r'\\leftarrow',    '←'),  (r'\\to\b',     '→'),
+        (r'\\forall',       '∀'),  (r'\\exists',       '∃'),
+        (r'\\,',            ' '),  (r'\\!',            ''),   (r'\\;',      ' '),
+        (r'\\:',            ' '),  (r'\\ ',            ' '),
+    ]
+
+    def _sup(s):
+        if all(c in "0123456789+-" for c in s):
+            return s.translate(SUP)
+        return f'^{s}' if len(s) == 1 else f'^({s})'
+
+    def _sub(s):
+        if all(c in "0123456789" for c in s):
+            return s.translate(SUB)
+        return f'_{s}' if len(s) == 1 else f'_({s})'
+
+    def convert(expr: str) -> str:
+        e = expr.strip()
+        for pat, rep in SYMBOLS:
+            e = re.sub(pat, rep, e) if isinstance(rep, str) else re.sub(pat, rep, e)
+        # exposants/indices avec accolades
+        e = re.sub(r'\^\{([^}]+)\}', lambda m: _sup(m.group(1)), e)
+        e = re.sub(r'_\{([^}]+)\}',  lambda m: _sub(m.group(1)), e)
+        # exposants/indices simples (chiffre ou lettre unique)
+        e = re.sub(r'\^([0-9a-zA-Z])', lambda m: _sup(m.group(1)), e)
+        e = re.sub(r'_([0-9a-zA-Z])',  lambda m: _sub(m.group(1)), e)
+        # commandes LaTeX restantes + accolades
+        e = re.sub(r'\\[a-zA-Z]+\*?', '', e)
+        e = e.replace('{', '').replace('}', '')
+        return e
+
+    # 1. Blocs display math : \[...\] et $$...$$
+    text = re.sub(r'\\\[(.+?)\\\]', lambda m: convert(m.group(1)), text, flags=re.DOTALL)
+    text = re.sub(r'\$\$(.+?)\$\$', lambda m: convert(m.group(1)), text, flags=re.DOTALL)
+    # 2. Math inline : $...$
+    text = re.sub(r'\$(.+?)\$', lambda m: convert(m.group(1)), text)
+    # 3. LaTeX nu hors délimiteurs (le LLM omet parfois les $)
+    text = convert(text)
+    # 4. Supprimer les commandes de structure (\newpage, \hline, etc.)
+    text = re.sub(r'\\(newpage|hline|noindent|medskip|bigskip|vspace\{[^}]*\})', '', text)
+    return text
+
+
+@mcp.tool("generate_pdf", "Generate a PDF with a the provided content, subject, and filename and eventually a style")
+def generate_pdf(
+    content,
+    subject,
+    filename,
+    style: str = "default",
+) -> str:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    # Police Unicode avec couverture math complète (∞ ∈ ∫ ≤ ℝ etc.)
+    _ARIAL_UNI = "/Library/Fonts/Arial Unicode.ttf"
+    _ARIAL_UNI2 = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
+    _font_path = _ARIAL_UNI if Path(_ARIAL_UNI).exists() else (_ARIAL_UNI2 if Path(_ARIAL_UNI2).exists() else None)
+    if _font_path:
+        pdfmetrics.registerFont(TTFont("UniFont", _font_path))
+        FONT_BODY = "UniFont"
+        FONT_BOLD = "UniFont"
+    else:
+        FONT_BODY = "Helvetica"
+        FONT_BOLD = "Helvetica-Bold"
+
+    content = _latex_to_unicode(content)
+
+    # Nom du fichier
+    if not filename:
+        slug = re.sub(r"[^a-z0-9]+", "_", subject[:40].lower()).strip("_")
+        filename = f"{slug}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    if not filename.endswith(".pdf"):
+        filename += ".pdf"
+    output_path = PDF_OUTPUT_DIR / filename
+
+    # Styles
+    body_style   = ParagraphStyle("body",   fontName=FONT_BODY, fontSize=11, leading=16, spaceAfter=4, alignment=TA_JUSTIFY)
+    h1_style     = ParagraphStyle("h1",     fontName=FONT_BOLD, fontSize=18, leading=24, spaceAfter=8)
+    h2_style     = ParagraphStyle("h2",     fontName=FONT_BOLD, fontSize=14, leading=20, spaceAfter=6)
+    h3_style     = ParagraphStyle("h3",     fontName=FONT_BOLD, fontSize=12, leading=16, spaceAfter=4)
+    bullet_style = ParagraphStyle("bullet", fontName=FONT_BODY, fontSize=11, leading=15, leftIndent=20, spaceAfter=3)
+    meta_style   = ParagraphStyle("meta",   fontName=FONT_BODY, fontSize=8,  leading=12, alignment=TA_CENTER, textColor=colors.HexColor("#999999"))
+
+    def inline(t):
+        t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
+        t = re.sub(r"\*(.+?)\*",     r"<i>\1</i>", t)
+        return t
+
+    # Story
+    story = []
+    now = datetime.datetime.now().strftime("%d/%m/%Y")
+    story += [Paragraph(f"Sujet : {subject} · {now}", meta_style), Spacer(1, 4),
+              HRFlowable(width="100%", thickness=1, color=colors.HexColor("#1A1A2E")), Spacer(1, 14)]
+
+    for line in content.split("\n"):
+        s = line.strip()
+        if not s:                         story.append(Spacer(1, 6))
+        elif s.startswith("### "):        story.append(Paragraph(inline(s[4:]), h3_style))
+        elif s.startswith("## "):         story.append(Paragraph(inline(s[3:]), h2_style))
+        elif s.startswith("# "):          story.append(Paragraph(inline(s[2:]), h1_style))
+        elif s.startswith(("- ", "* ")): story.append(Paragraph(f"• {inline(s[2:])}", bullet_style))
+        else:                             story.append(Paragraph(inline(s), body_style))
+
+    #story += [Spacer(1, 20), HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#CCCCCC")),
+              #Paragraph(f"Contenu généré par {LLAMA_MODEL} via llama.cpp", meta_style)]
+
+    doc = SimpleDocTemplate(str(output_path), pagesize=A4,
+                            leftMargin=2.5*cm, rightMargin=2.5*cm,
+                            topMargin=2.5*cm, bottomMargin=2.5*cm)
+    doc.build(story)
+    return f"✅ PDF généré : {output_path}"
+
+
+@mcp.tool("list_pdfs", "Liste les PDFs déjà générés")
+def list_pdfs() -> str:
+    pdfs = sorted(PDF_OUTPUT_DIR.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not pdfs:
+        return f"Aucun PDF dans {PDF_OUTPUT_DIR}"
+    lines = [f"📁 {PDF_OUTPUT_DIR}"]
+    for p in pdfs:
+        mtime = datetime.datetime.fromtimestamp(p.stat().st_mtime).strftime("%d/%m/%Y %H:%M")
+        lines.append(f"  • {p.name}  ({p.stat().st_size // 1024} Ko, {mtime})")
+    return "\n".join(lines)
+
 if __name__ == "__main__":
     # Start the server
     #print("🚀Starting server... ")
@@ -165,8 +334,11 @@ if __name__ == "__main__":
     # uv run server.py --server_type=sse
 
     parser = argparse.ArgumentParser()
+    # parser.add_argument(
+    #     "--server_type", type=str, default="sse", choices=["sse", "stdio"]
+    # )
     parser.add_argument(
-        "--server_type", type=str, default="sse", choices=["sse", "stdio"]
+        "--server_type", type=str, default="sse", choices=["sse", "stdio", "streamable-http"]
     )
 
     args = parser.parse_args()
